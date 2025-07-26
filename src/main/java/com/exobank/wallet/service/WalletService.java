@@ -131,7 +131,6 @@ public class WalletService {
                 java.time.LocalDateTime.now()
         ));
 
-        // TODO: integrate with external bank API (e.g., Flutterwave, Mono, Paystack)
     }
 
     public void transferToExternalBank(ExternalTransferRequest request) {
