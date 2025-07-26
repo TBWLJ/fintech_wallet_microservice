@@ -1,7 +1,9 @@
 package com.exobank.wallet.service;
 
+import com.exobank.wallet.dto.ExternalTransferRequest;
 import com.exobank.wallet.dto.TransferRequest;
 import com.exobank.wallet.dto.WithdrawRequest;
+import com.exobank.wallet.integration.NibssService;
 import com.exobank.wallet.model.Transaction;
 import com.exobank.wallet.model.TransactionType;
 import com.exobank.wallet.model.Wallet;
@@ -13,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class WalletService {
@@ -22,6 +25,10 @@ public class WalletService {
 
     @Autowired
     private TransactionRepository transactionRepository;
+
+    @Autowired
+    private NibssService nibssService;
+
 
     public Wallet createWallet(String userId) {
         if (walletRepository.existsByUserId(userId)) {
@@ -125,5 +132,47 @@ public class WalletService {
         ));
 
         // TODO: integrate with external bank API (e.g., Flutterwave, Mono, Paystack)
+    }
+
+    public void transferToExternalBank(ExternalTransferRequest request) {
+        Wallet wallet = getWalletByUserId(request.getUserId());
+
+        if (wallet.getBalance().compareTo(request.getAmount()) < 0) {
+            throw new RuntimeException("Insufficient balance");
+        }
+
+        // Generate reference
+        String reference = UUID.randomUUID().toString();
+
+        // Debit user
+        wallet.setBalance(wallet.getBalance().subtract(request.getAmount()));
+        walletRepository.save(wallet);
+
+        // Save transaction
+        Transaction txn = Transaction.builder()
+                .walletId(wallet.getId())
+                .amount(request.getAmount())
+                .reference(reference)
+                .description(request.getNarration())
+                .type(TransactionType.EXTERNAL_TRANSFER)
+                .build();
+
+        transactionRepository.save(txn);
+
+        // Initiate transfer with NIBSS
+        boolean success = nibssService.transferToBank(
+            request.getBankCode(),
+            request.getAccountNumber(),
+            request.getAccountName(),
+            request.getAmount(),
+            txn.getReference(),
+            request.getNarration()
+        );
+
+        if (!success) {
+            wallet.setBalance(wallet.getBalance().add(request.getAmount()));
+            walletRepository.save(wallet);
+            throw new RuntimeException("External bank transfer failed");
+        }
     }
 }
